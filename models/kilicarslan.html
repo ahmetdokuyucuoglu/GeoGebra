@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GeoGebra etkinliği</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23162b49'/%3E%3Cpath d='M32 12 50 22v20L32 52 14 42V22zM14 22l18 10 18-10M32 32v20' fill='none' stroke='%23fff' stroke-width='3'/%3E%3C/svg%3E">
+  <script>
+    // HER MODEL İÇİN YALNIZCA BU İKİ SATIRI DEĞİŞTİRİN.
+    // .ggb dosyası ve bu HTML dosyası, models klasöründe yan yana bulunmalı.
+    const MODEL_DOSYASI = 'kilicarslan.ggb';
+    const MODEL_ADI = 'Kılıçarslan Kümbeti';
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f6fa; color: #162b49; font: 16px/1.5 system-ui, sans-serif; }
+    header { background: #162b49; color: white; padding: 22px max(20px, calc((100vw - 1320px)/2)); }
+    header a { color: #d6e5ff; text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+    h1 { margin: 12px 0 0; font-size: clamp(24px, 4vw, 34px); line-height: 1.2; }
+    main { max-width: 1360px; margin: auto; padding: 22px 20px 32px; }
+    .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+    button, .download { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 15px; border: 1px solid #c6d1df; border-radius: 9px; background: white; color: #162b49; font: inherit; text-decoration: none; cursor: pointer; }
+    button:hover, .download:hover { background: #e9f0fb; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .download { margin-left: auto; }
+    :focus-visible { outline: 3px solid #2472d9; outline-offset: 3px; }
+    .frame { position: relative; height: min(76vh, 880px); min-height: 430px; border: 1px solid #d7dfea; border-radius: 12px; overflow: hidden; background: white; }
+    #ggb-element { width: 100%; height: 100%; }
+    .loading { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; padding: 28px; text-align: center; background: #fff; }
+    .loading[hidden] { display: none; }
+    .loading p { max-width: 520px; }
+    .hint { color: #506178; margin: 16px 0 0; }
+    @media (max-width: 600px) { main { padding: 16px 10px; } header { padding: 18px 16px; } .download { margin-left: 0; } .frame { min-height: 480px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="../index.html">← Model galerisine dön</a>
+    <h1 id="model-title">Etkileşimli model</h1>
+  </header>
+  <main>
+    <div class="tools" aria-label="Model görünümü">
+      <button id="view-3d" type="button" disabled>3B model</button>
+      <button id="view-controls" type="button" disabled>Model ve sürgüler</button>
+    </div>
+    <div class="frame" id="frame">
+      <div id="ggb-element"></div>
+      <div class="loading" id="loading">
+        <p id="status" role="status" aria-live="polite">Model yükleniyor…</p>
+        <button id="retry" type="button" hidden>Yeniden dene</button>
+      </div>
+    </div>
+    <p class="hint">Modeli sürükleyerek döndürün, yakınlaştırma düğmelerini kullanın. Dosyanızdaki sürgüleri görmek için “Model ve sürgüler” düğmesine dokunun. İnternet bağlantısı gerekir.</p>
+    <noscript><p>Bu etkinliği görüntülemek için tarayıcınızda JavaScript açık olmalıdır.</p></noscript>
+  </main>
+  <script>
+    const modelURL = new URL(MODEL_DOSYASI, document.baseURI).href;
+    document.title = MODEL_ADI + ' · GeoGebra';
+    document.getElementById('model-title').textContent = MODEL_ADI;
+    const frame = document.getElementById('frame');
+    const loading = document.getElementById('loading');
+    const status = document.getElementById('status');
+    const retry = document.getElementById('retry');
+    const view3d = document.getElementById('view-3d');
+    const viewControls = document.getElementById('view-controls');
+    let api;
+    let activeView = 'saved';
+    let loadingTimer;
+    let resizeTimer;
+    const size = () => ({ width: Math.max(1, Math.floor(frame.clientWidth)), height: Math.max(1, Math.floor(frame.clientHeight)) });
+    const controlsPerspective = () => frame.clientWidth < 700 ? 'T/G' : 'GT';
+    function fail(message) {
+      clearTimeout(loadingTimer);
+      status.textContent = message;
+      retry.hidden = false;
+    }
+    retry.addEventListener('click', () => location.reload());
+    view3d.addEventListener('click', () => {
+      if (!api) return;
+      api.setPerspective('T');
+      activeView = '3d';
+    });
+    viewControls.addEventListener('click', () => {
+      if (!api) return;
+      api.setPerspective(controlsPerspective());
+      activeView = 'controls';
+    });
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (!api) return;
+        const currentSize = size();
+        api.setSize(currentSize.width, currentSize.height);
+        if (activeView === 'controls') api.setPerspective(controlsPerspective());
+      }, 180);
+    });
+    async function start() {
+      if (location.protocol === 'file:') {
+        status.textContent = 'Modeli görüntülemek için bu sayfayı GitHub Pages bağlantısından açın. HTML ve .ggb dosyalarını aynı models klasörüne yükleyin. Bilgisayarda modeli doğrudan GeoGebra ile açabilirsiniz.';
+        return;
+      }
+      loadingTimer = setTimeout(() => {
+        status.textContent = 'Yükleme beklenenden uzun sürdü. İnternet bağlantınızı kontrol edin; gerekirse GeoGebra dosyasını indirip GeoGebra uygulamasında açın.';
+        retry.hidden = false;
+      }, 60000);
+      try {
+        const response = await fetch(modelURL, { method: 'HEAD' });
+        if (!response.ok) {
+          fail('Model dosyası bulunamadı. HTML içindeki MODEL_DOSYASI adını ve models klasöründeki .ggb dosyasını kontrol edin. Büyük ve küçük harfler aynı olmalı.');
+          return;
+        }
+      } catch (error) {
+        fail('Model dosyasına erişilemedi. İnternet bağlantısını ve modelin siteye yüklendiğini kontrol edin.');
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://www.geogebra.org/apps/deployggb.js';
+      script.onerror = () => fail('GeoGebra yüklenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.');
+      script.onload = () => {
+        try {
+          const dimensions = size();
+          const params = {
+            appName: 'classic',
+            id: 'modelApplet',
+            filename: modelURL,
+            width: dimensions.width,
+            height: dimensions.height,
+            language: 'tr',
+            showToolBar: false,
+            showAlgebraInput: false,
+            showMenuBar: false,
+            showResetIcon: true,
+            showZoomButtons: true,
+            showFullscreenButton: true,
+            enableShiftDragZoom: true,
+            enableRightClick: true,
+            enableLabelDrags: false,
+            useBrowserForJS: false,
+            appletOnLoad: loadedApi => {
+              api = loadedApi;
+              clearTimeout(loadingTimer);
+              loading.hidden = true;
+              view3d.disabled = false;
+              viewControls.disabled = false;
+              const currentSize = size();
+              api.setSize(currentSize.width, currentSize.height);
+            }
+          };
+          const applet = new GGBApplet(params, true);
+          applet.inject('ggb-element');
+        } catch (error) {
+          fail('Etkinlik başlatılamadı. Yeniden deneyebilir veya GeoGebra dosyasını indirebilirsiniz.');
+        }
+      };
+      document.head.appendChild(script);
+    }
+    start();
+  </script>
+</body>
+</html>
